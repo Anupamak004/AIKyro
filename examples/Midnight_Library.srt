@@ -1,0 +1,35 @@
+1
+00:00:04,000 --> 00:00:06,400
+MIRA: The library closes at midnight, but the stories don't.
+
+2
+00:00:06,800 --> 00:00:09,500
+LEO: You said the map would show me the way home.
+
+3
+00:00:10,000 --> 00:00:13,200
+MIRA: I promised to walk beside you until we find the blue door.
+
+4
+00:00:13,600 --> 00:00:15,900
+LEO: And if the door isn't there?
+
+5
+00:00:16,300 --> 00:00:19,000
+MIRA: Then we keep looking together. That's the promise.
+
+6
+00:01:02,000 --> 00:01:04,500
+LEO: I can hear the rain, but I can't see the street.
+
+7
+00:01:05,000 --> 00:01:08,000
+MIRA: Follow the silver lights. They lead to the station.
+
+8
+00:02:11,250 --> 00:02:14,000
+LEO: We found the blue door. You kept your promise.
+
+9
+00:02:14,500 --> 00:02:17,500
+MIRA: We found it together. Remember that part.

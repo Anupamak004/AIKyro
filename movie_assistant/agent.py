@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 
 import requests
+from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 
 from .rag import Passage, SubtitleIndex
 
@@ -45,15 +46,74 @@ def _llm_answer(question: str, passages: list[Passage]) -> str | None:
         return None
 
 
+def _normalized_terms(text: str) -> set[str]:
+    """Small dependency-free stemmer for matching common inflections in dialogue."""
+    terms = set()
+    for word in re.findall(r"[a-z]+", text.casefold()):
+        if word in ENGLISH_STOP_WORDS:
+            continue
+        if word.endswith("ied") and len(word) > 4:
+            word = word[:-3] + "y"
+        elif word.endswith("ed") and len(word) > 4:
+            word = word[:-2]
+        elif word.endswith("ing") and len(word) > 5:
+            word = word[:-3]
+        elif word.endswith("s") and len(word) > 4:
+            word = word[:-1]
+        if word.endswith("e") and len(word) > 4:
+            word = word[:-1]
+        terms.add(word)
+    return terms
+
+
+def _extractive_answer(question: str, ranked_passages: list[tuple[Passage, float]]) -> tuple[str, Passage | None]:
+    """Select the dialogue sentence that best answers the question, rather than dumping chunks."""
+    candidates: list[tuple[int, float, str, Passage]] = []
+    query_terms = _normalized_terms(question)
+    for passage, passage_score in ranked_passages:
+        # SRTs commonly put one speaker per cue; passage grouping joins cues with spaces.
+        dialogue_lines = re.split(r"\s+(?=[A-Z][A-Z0-9 _'-]{1,28}:\s)", passage.text)
+        for line in dialogue_lines:
+            speaker_match = re.match(r"^([A-Z][A-Z0-9 _'-]{1,28}):\s*", line)
+            speaker = speaker_match.group(1).strip().casefold() if speaker_match else ""
+            line = re.sub(r"^[A-Z][A-Z0-9 _'-]{1,28}:\s*", "", line)
+            sentences = re.split(r"(?<=[.!?])\s+", line)
+            for sentence in sentences:
+                sentence = sentence.strip(" \t\"'“”")
+                if not sentence:
+                    continue
+                terms = _normalized_terms(sentence)
+                overlap = len(query_terms & terms)
+                if speaker and _normalized_terms(speaker) & query_terms:
+                    overlap += 2
+                coverage = overlap / max(1, len(query_terms))
+                candidates.append((overlap, coverage + passage_score * 0.05, sentence, passage))
+
+    if not candidates:
+        return "I found related dialogue, but couldn't isolate a direct answer from the subtitle text.", None
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    overlap, _, sentence, passage = candidates[0]
+    if overlap < 2:
+        excerpts = "\n\n".join(f"“{p.text}”\n— {p.citation}" for p, _ in ranked_passages[:3])
+        return ("I couldn't isolate a direct answer, but these are the closest subtitle passages:\n\n" + excerpts,
+                None)
+
+    speaker_match = re.match(r"^([A-Z][A-Z0-9 _'-]{1,28}):", next(
+        (line for line in re.split(r"\s+(?=[A-Z][A-Z0-9 _'-]{1,28}:\s)", passage.text)
+         if sentence in line), ""))
+    speaker = speaker_match.group(1).title() if speaker_match else "The dialogue"
+    return f'{speaker} says, “{sentence}” [{passage.citation}]', passage
+
+
 def answer_question(question: str, passages: list[tuple[Passage, float]]) -> Result:
     selected = [p for p, _ in passages]
     if not selected:
         return Result("answer", "I couldn't find a relevant passage in the subtitles currently loaded. Try a character name, quote fragment, or a more specific question.", [], [])
     response = _llm_answer(question, selected)
     if response is None:
-        excerpts = "\n\n".join(f"“{p.text}”\n— {p.citation}" for p in selected[:3])
-        response = ("The closest subtitle passages I found are:\n\n" + excerpts +
-                    "\n\nThese excerpts provide dialogue evidence; subtitle text alone may not establish the full plot context.")
+        response, evidence = _extractive_answer(question, passages)
+        if evidence is not None:
+            selected = [evidence]
     citations = list(dict.fromkeys(p.citation for p in selected))
     # Keep citations visible in the answer itself even if an optional model omits them.
     if citations and not any(citation in response for citation in citations):
